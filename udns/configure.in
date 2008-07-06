@@ -1,0 +1,512 @@
+AC_INIT(src/noitd.c)
+
+node=`hostname | cut -f1 -d '.' | tr '[A-Z]' '[a-z]'`
+if test -f ".configure.$node"; then
+	echo "***********************************************************"
+        echo "* Loading node specific configure settings for $node."
+	echo "***********************************************************"
+	. ./.configure.$node
+fi
+
+AC_CANONICAL_HOST
+AC_CONFIG_HEADER(src/noit_config.h)
+AC_CONFIG_HEADER(src/jlog/jlog_config.h)
+
+AC_PROG_CC
+AC_C_INLINE
+AC_C_BIGENDIAN
+AC_PROG_CPP
+AC_PROG_RANLIB
+AC_PROG_INSTALL
+AC_PROG_LN_S
+AC_PATH_PROG(AR, ar)
+AC_PATH_PROGS(PERL, perl)
+AC_SUBST(PERL)
+
+if test "x$CC" = "xgcc" ; then
+  CFLAGS="$CFLAGS -g -Wall"
+else
+  CFLAGS="$CFLAGS -g"
+fi
+
+CPPFLAGS="$CPPFLAGS "'-I$(top_srcdir)/src'
+
+case $host in
+*-*-darwin*)
+	PICFLAGS="-fPIC"
+	MODULELD="$CC -bundle -flat_namespace -undefined suppress"
+	SHLD="$CC -dynamiclib -flat_namespace -undefined suppress"
+	MODULEEXT=bundle
+	RLDFLAG="-Wl,--rpath="
+	;;
+*-*-solaris*)
+	AC_MSG_CHECKING([32 or 64 bit Solaris assembly])
+	if test -n "`echo $CFLAGS | grep m64`"; then
+		AC_MSG_RESULT([64])
+		ATOMIC_OBJS="noit_atomic_sol_x86_64.o"
+	else
+		AC_MSG_RESULT([32])
+		ATOMIC_OBJS="noit_atomic_sol_x86_32.o"
+	fi
+	PICFLAGS="-Kpic"
+	MODULELD="$CC -G"
+	SHLD="$CC -G"
+	MODULEEXT=so
+	RLDFLAG="-R"
+	WHOLE_ARCHIVE="-Wl,-z -Wl,allextract"
+	NOWHOLE_ARCHIVE="-Wl,-z -Wl,defaultextract"
+	;;
+*-*-openbsd*)
+	PICFLAGS="-fpic"
+	LDFLAGS="$LDFLAGS -Wl,-E"
+	MODULELD="$CC -shared"
+	SHLD="$CC -shared"
+	MODULEEXT=so
+	LDFLAGS="$LDFLAGS -L/usr/local/lib"
+	CFLAGS="$CFLAGS -I/usr/local/include"
+	RLDFLAG="-Wl,--rpath="
+	WHOLE_ARCHIVE="-Wl,--whole-archive"
+	NOWHOLE_ARCHIVE="-Wl,--no-whole-archive"
+	;;
+*-*-linux*)
+	LDFLAGS="$LDFLAGS -Wl,-E"
+	CPPFLAGS="$CPPFLAGS"
+	PICFLAGS="-fpic"
+	MODULELD="$CC -shared"
+	SHLD="$CC -shared"
+	MODULEEXT=so
+	RLDFLAG="-Wl,--rpath="
+	WHOLE_ARCHIVE="-Wl,--whole-archive"
+	NOWHOLE_ARCHIVE="-Wl,--no-whole-archive"
+	;;
+*)
+	PICFLAGS="-fpic"
+	MODULELD="$CC -shared"
+	MODULEEXT=so
+	RLDFLAG="-Wl,--rpath="
+	;;
+esac
+AC_SUBST(SHLD)
+AC_SUBST(RLDFLAG)
+AC_SUBST(MODULELD)
+AC_SUBST(MODULEEXT)
+AC_SUBST(WHOLE_ARCHIVE)
+AC_SUBST(NOWHOLE_ARCHIVE)
+AC_SUBST(ATOMIC_OBJS)
+AC_DEFINE_UNQUOTED(MODULEEXT, "$MODULEEXT", [module extension])
+
+# Checks for data types
+AC_CHECK_SIZEOF(char, 1)
+AC_CHECK_SIZEOF(short int, 2)
+AC_CHECK_SIZEOF(int, 4)
+AC_CHECK_SIZEOF(long int, 4)
+AC_CHECK_SIZEOF(long long int, 8)
+AC_CHECK_SIZEOF(void *, 1)
+
+AC_CHECK_LIB(z, compress2, , [AC_MSG_ERROR(*** zlib is required ***)])
+AC_CHECK_LIB(rt, sem_init, , )
+AC_CHECK_LIB(posix4, sem_wait, , )
+AC_CHECK_LIB(pthread, pthread_create, , )
+AC_CHECK_LIB(uuid, uuid_generate, , [AC_MSG_ERROR(*** uuid is required ***)])
+# Some libraries provide an unparse_lower command
+# we use that, so if it isn't present, we'll need
+# to implement it.
+AC_CHECK_FUNC(uuid_unparse_lower, [AC_DEFINE(HAVE_UUID_UNPARSE_LOWER)], )
+AC_CHECK_LIB(util, openpty, , )
+AC_CHECK_LIB(termcap, tputs, , )
+AC_CHECK_LIB(curses, clear, , [AC_MSG_ERROR([curses not found, but required])])
+
+CPPFLAGS="$CPPFLAGS `pcre-config --cflags`"
+LDFLAGS="$LDFLAGS `pcre-config --libs`"
+AC_CHECK_LIB(pcre, pcre_compile, ,
+	[
+		AC_MSG_ERROR([libpcre not found, but required])
+	]
+)
+AC_CHECK_LIB(crypto, ERR_load_CRYPTO_strings, ,
+	[
+		AC_MSG_ERROR([libcrypto not found, but required])
+	]
+)
+AC_CHECK_LIB(ssl, SSL_library_init, ,
+	[
+		AC_MSG_ERROR([libssl not found, but required])
+	]
+)
+
+old_LIBS=$LIBS
+old_CFLAGS=$CFLAGS
+AC_CHECK_LIB(pq, PQconnectdb,
+	[
+		LIBS="$LIBS -lpq"
+		PGLIBS="$LIBS"
+		AC_SUBST(PGLIBS)
+	],
+	[
+		AC_MSG_ERROR([libpq required])
+	]
+)
+
+AC_MSG_CHECKING([libpq includes])
+PQICFLAGS=`pg_config --includedir`
+if test -n "$PQICFLAGS" ; then
+  CFLAGS="$CFLAGS -I$PQICFLAGS"
+fi
+
+AC_TRY_LINK([
+	#include <libpq-fe.h>
+	],
+	[ PGconn *dbh = PQconnectdb(""); ],
+	[],
+	[ AC_MSG_ERROR([Cannot compile/link against libpq]) ]
+)
+PGCFLAGS=$CFLAGS
+AC_SUBST(PGCFLAGS)
+
+LIBS=$old_LIBS
+CFLAGS=$old_CFLAGS
+
+########
+#
+# CHECK FOR VARIOUS MODULE CRITERIA
+# We don't track the libs themselves, as we'll just explictly link
+# against the in the makefile if we enable them to build (by adding
+# them to the BUILD_MODULES list).
+#
+########
+
+# Should we build snmp checks?
+SAVELIBS="$LIBS"
+AC_CHECK_LIB(netsnmp, snmp_sess_open,
+	[
+		BUILD_MODULES="$BUILD_MODULES snmp.$MODULEEXT"
+	],
+	[
+		AC_MSG_WARN([No libnetsnmp, skipping snmp module])
+	]
+)
+LIBS="$SAVELIBS"
+
+# Should we build ssh2 checks?
+SAVELIBS="$LIBS"
+AC_CHECK_LIB(ssh2, libssh2_session_init_ex,
+	[
+		BUILD_MODULES="$BUILD_MODULES ssh2.$MODULEEXT"
+	],
+	[
+		AC_MSG_WARN([No libssh2, skipping ssh2 module])
+	]
+)
+LIBS="$SAVELIBS"
+
+AC_MSG_CHECKING([libxml2 cflags])
+XML2CFLAGS=`xml2-config --cflags`
+CFLAGS="$CFLAGS $XML2CFLAGS"
+AC_MSG_RESULT([$XML2CFLAGS])
+
+AC_MSG_CHECKING([libxml2 libs])
+XML2LIBS=`xml2-config --libs`
+LIBS="$LIBS $XML2LIBS"
+AC_MSG_RESULT([$XML2LIBS])
+
+APRPREFIX="`apr-1-config --prefix`"
+AC_MSG_CHECKING([libserf cflags])
+AC_SUBST(APRPREFIX)
+AC_MSG_RESULT([$APRPREFIX])
+
+AC_MSG_CHECKING([libserf cflags])
+SERFCFLAGS="`apr-1-config --cflags --cppflags`"
+SERFCFLAGS="$SERFCFLAGS -I`apu-1-config --includedir` -I`apr-1-config --includedir`"
+AC_SUBST(SERFCFLAGS)
+AC_MSG_RESULT([$SERFCFLAGS])
+
+AC_MSG_CHECKING([libserf libs])
+SERFLIBS="`apu-1-config --link-ld --ldflags --libs` `apr-1-config --link-ld --ldflags --libs`"
+AC_SUBST(SERFLIBS)
+AC_MSG_RESULT([$SERFLIBS])
+
+AC_TRY_LINK([],
+	[ issetugid(); ],
+	[ ac_cv_libc_defines_issetugid="yes" ],
+	[ ac_cv_libc_defines_issetugid="no" ]
+)
+if test "x$ac_cv_libc_defines_issetugid" = "xyes" ; then
+	AC_DEFINE(HAVE_ISSETUGID)
+fi
+
+AC_MSG_CHECKING([whether sem_init works])
+AC_TRY_RUN(
+	[
+#include <semaphore.h>
+int main(void){sem_t s;return (0 != sem_init(&s,0,0));}
+	],
+	[AC_MSG_RESULT(yes)], 
+	[
+		AC_MSG_RESULT(no)
+		AC_DEFINE(BROKEN_SEM_INIT)
+		AC_MSG_WARN([****** sem_init() is broken, I'll implement one myself.])
+	]
+)
+
+AC_FUNC_STRFTIME
+AC_CHECK_FUNCS(ssetugid strlcpy strnstrn openpty)
+
+# Checks for header files.
+AC_CHECK_HEADERS(sys/file.h sys/types.h dirent.h sys/param.h fcntl.h errno.h limits.h \
+                 sys/resource.h pthread.h semaphore.h pwd.h stdio.h stdlib.h string.h \
+                 ctype.h unistd.h time.h sys/stat.h sys/event.h libkern/OSAtomic.h \
+                 term.h termio.h termios.h curses.h sys/cdefs.h pwd.h netinet/in_systm.h \
+                 sys/ioctl_compat.h sys/filio.h util.h sys/time.h sys/mman.h \
+                 stropts.h sys/stream.h alloca.h)
+
+AC_MSG_CHECKING(for tputs() function final argument type)
+AC_EGREP_CPP([tputs.*[(][       ]*char[         ]*[)]],
+		[#if defined(HAVE_TERM_H)
+		 #include <term.h>
+		 #endif
+		 #if defined(HAVE_CURSES_H)
+		 #include <curses.h>
+		 #endif],
+		[AC_MSG_RESULT(char)
+		 AC_DEFINE(TPUTS_TAKES_CHAR)],
+		[AC_MSG_RESULT(not char)])
+
+AC_CACHE_CHECK([for epoll support], ac_cv_have_epoll, [
+	AC_TRY_LINK(
+		[ #include <sys/types.h> ],
+		[ u_int a; a = epoll_create(); ],
+		[ ac_cv_have_epoll="yes" ],
+		[ ac_cv_have_epoll="no" ]
+	)
+])
+if test "x$ac_cv_have_epoll" = "xyes" ; then
+	AC_DEFINE(HAVE_EPOLL)
+	EVENTER_OBJS="$EVENTER_OBJS eventer_epoll_impl.o"
+	AC_DEFINE_UNQUOTED(DEFAULT_EVENTER, "epoll")
+	have_epoll=1
+fi
+
+AC_CACHE_CHECK([for kqueue support], ac_cv_have_kqueue, [
+	AC_TRY_LINK(
+		[ #include <sys/types.h> ],
+		[ u_int a; a = kqueue(); ],
+		[ ac_cv_have_kqueue="yes" ],
+		[ ac_cv_have_kqueue="no" ]
+	)
+])
+if test "x$ac_cv_have_kqueue" = "xyes" ; then
+	AC_DEFINE(HAVE_KQUEUE)
+	EVENTER_OBJS="$EVENTER_OBJS eventer_kqueue_impl.o"
+	AC_DEFINE_UNQUOTED(DEFAULT_EVENTER, "kqueue")
+	have_kqueue=1
+fi
+
+AC_CACHE_CHECK([for Solaris ports support], ac_cv_have_ports, [
+	AC_TRY_LINK(
+		[ #include <port.h> ],
+		[ u_int a; a = port_create(); ],
+		[ ac_cv_have_ports="yes" ],
+		[ ac_cv_have_ports="no" ]
+	)
+])
+if test "x$ac_cv_have_ports" = "xyes" ; then
+	AC_DEFINE(HAVE_PORTS)
+	EVENTER_OBJS="$EVENTER_OBJS eventer_ports_impl.o"
+	AC_DEFINE_UNQUOTED(DEFAULT_EVENTER, "ports")
+	have_ports=1
+fi
+
+AC_SUBST(EVENTER_OBJS)
+
+AC_CACHE_CHECK([for u_int type], ac_cv_have_u_int, [
+	AC_TRY_COMPILE(
+		[ #include <sys/types.h> ], 
+		[ u_int a; a = 1;], 
+		[ ac_cv_have_u_int="yes" ],
+		[ ac_cv_have_u_int="no" ]
+	)
+])
+if test "x$ac_cv_have_u_int" = "xyes" ; then
+	AC_DEFINE(HAVE_U_INT)
+	have_u_int=1
+fi
+
+AC_CACHE_CHECK([for intXX_t types], ac_cv_have_intxx_t, [
+	AC_TRY_COMPILE(
+		[ #include <sys/types.h> ], 
+		[ int8_t a; int16_t b; int32_t c; a = b = c = 1;], 
+		[ ac_cv_have_intxx_t="yes" ],
+		[ ac_cv_have_intxx_t="no" ]
+	)
+])
+if test "x$ac_cv_have_intxx_t" = "xyes" ; then
+	AC_DEFINE(HAVE_INTXX_T)
+	have_intxx_t=1
+fi
+	
+AC_CACHE_CHECK([for int64_t type], ac_cv_have_int64_t, [
+	AC_TRY_COMPILE(
+		[ #include <sys/types.h> ], 
+		[ int64_t a; a = 1;], 
+		[ ac_cv_have_int64_t="yes" ],
+		[ ac_cv_have_int64_t="no" ]
+	)
+])
+if test "x$ac_cv_have_int64_t" = "xyes" ; then
+	AC_DEFINE(HAVE_INT64_T)
+	have_int64_t=1
+fi
+	
+AC_CACHE_CHECK([for u_intXX_t types], ac_cv_have_u_intxx_t, [
+	AC_TRY_COMPILE(
+		[ #include <sys/types.h> ], 
+		[ u_int8_t a; u_int16_t b; u_int32_t c; a = b = c = 1;], 
+		[ ac_cv_have_u_intxx_t="yes" ],
+		[ ac_cv_have_u_intxx_t="no" ]
+	)
+])
+if test "x$ac_cv_have_u_intxx_t" = "xyes" ; then
+	AC_DEFINE(HAVE_U_INTXX_T)
+	have_u_intxx_t=1
+fi
+
+AC_CACHE_CHECK([for u_int64_t types], ac_cv_have_u_int64_t, [
+	AC_TRY_COMPILE(
+		[ #include <sys/types.h> ], 
+		[ u_int64_t a; a = 1;], 
+		[ ac_cv_have_u_int64_t="yes" ],
+		[ ac_cv_have_u_int64_t="no" ]
+	)
+])
+if test "x$ac_cv_have_u_int64_t" = "xyes" ; then
+	AC_DEFINE(HAVE_U_INT64_T)
+	have_u_int64_t=1
+fi
+
+if (test -z "$have_u_intxx_t" || test -z "$have_intxx_t" && \
+           test "x$ac_cv_header_sys_bitypes_h" = "xyes")
+then
+	AC_MSG_CHECKING([for intXX_t and u_intXX_t types in sys/bitypes.h])
+	AC_TRY_COMPILE(
+		[
+#include <sys/bitypes.h>
+		], 
+		[
+			int8_t a; int16_t b; int32_t c;
+			u_int8_t e; u_int16_t f; u_int32_t g;
+			a = b = c = e = f = g = 1;
+		], 
+		[
+			AC_DEFINE(HAVE_U_INTXX_T)
+			AC_DEFINE(HAVE_INTXX_T)
+			AC_MSG_RESULT(yes)
+		],
+		[AC_MSG_RESULT(no)]
+	) 
+fi
+
+if test -z "$have_u_intxx_t" ; then
+	AC_CACHE_CHECK([for uintXX_t types], ac_cv_have_uintxx_t, [
+		AC_TRY_COMPILE(
+			[
+#include <sys/types.h>
+			], 
+			[ uint8_t a; uint16_t b; uint32_t c; a = b = c = 1; ], 
+			[ ac_cv_have_uintxx_t="yes" ],
+			[ ac_cv_have_uintxx_t="no" ]
+		)
+	])
+	if test "x$ac_cv_have_uintxx_t" = "xyes" ; then
+		AC_DEFINE(HAVE_UINTXX_T)
+	fi
+fi
+
+AC_CACHE_CHECK([for socklen_t], ac_cv_have_socklen_t, [
+	AC_TRY_COMPILE(
+		[
+#include <sys/types.h>
+#include <sys/socket.h>
+		],
+		[socklen_t foo; foo = 1235;],
+		[ ac_cv_have_socklen_t="yes" ],
+		[ ac_cv_have_socklen_t="no" ]
+	)
+])
+if test "x$ac_cv_have_socklen_t" = "xyes" ; then
+	AC_DEFINE(HAVE_SOCKLEN_T)
+fi
+
+AC_CACHE_CHECK([for size_t], ac_cv_have_size_t, [
+	AC_TRY_COMPILE(
+		[
+#include <sys/types.h>
+		],
+		[ size_t foo; foo = 1235; ],
+		[ ac_cv_have_size_t="yes" ],
+		[ ac_cv_have_size_t="no" ]
+	)
+])
+if test "x$ac_cv_have_size_t" = "xyes" ; then
+	AC_DEFINE(HAVE_SIZE_T)
+fi
+
+AC_CACHE_CHECK([for ssize_t], ac_cv_have_ssize_t, [
+	AC_TRY_COMPILE(
+		[
+#include <sys/types.h>
+		],
+		[ ssize_t foo; foo = 1235; ],
+		[ ac_cv_have_ssize_t="yes" ],
+		[ ac_cv_have_ssize_t="no" ]
+	)
+])
+if test "x$ac_cv_have_ssize_t" = "xyes" ; then
+	AC_DEFINE(HAVE_SSIZE_T)
+fi
+
+AC_SUBST(BUILD_MODULES)
+
+docdir="docs"
+mansubdir="man"
+AC_SUBST(docdir)
+AC_SUBST(mansubdir)
+SHCFLAGS="$PICFLAGS $CFLAGS"
+AC_SUBST(SHCFLAGS)
+
+AC_MSG_CHECKING([Resolving libexec path...])
+fullpath=$libexecdir
+while test "x$temppath" != "x$fullpath" ; do
+  temppath=$fullpath
+  fullpath=`eval echo ${fullpath}`
+done
+fullpath=`echo $fullpath | sed "s~NONE~$ac_default_prefix~"`
+AC_MSG_RESULT([$fullpath])
+AC_DEFINE_UNQUOTED(MODULES_DIR, "${fullpath}")
+MODULES_DIR=${fullpath}
+AC_SUBST(MODULES_DIR)
+
+AC_MSG_CHECKING([Resolving sysconfdir path...])
+fullpath=$sysconfdir
+while test "x$temppath" != "x$fullpath" ; do
+  temppath=$fullpath
+  fullpath=`eval echo ${fullpath}`
+done
+fullpath=`echo $fullpath | sed "s~NONE~$ac_default_prefix~"`
+AC_MSG_RESULT([$fullpath])
+AC_DEFINE_UNQUOTED(ETC_DIR, "${fullpath}")
+ETC_DIR=${fullpath}
+AC_SUBST(ETC_DIR)
+
+
+AC_OUTPUT([
+Makefile
+src/Makefile
+src/eventer/Makefile
+src/jlog/Makefile
+src/jlog/perl/Makefile.PL
+src/modules/Makefile
+src/utils/Makefile
+src/noitedit/Makefile
+src/lua/Makefile
+test/Makefile
+])

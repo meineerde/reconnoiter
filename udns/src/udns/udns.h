@@ -725,6 +725,9 @@ struct dns_nameval {
 UDNS_DATA_API extern const struct dns_nameval dns_classtab[];
 UDNS_DATA_API extern const struct dns_nameval dns_typetab[];
 UDNS_DATA_API extern const struct dns_nameval dns_rcodetab[];
+UDNS_API const struct dns_nameval *dns_class_index(int);
+UDNS_API const struct dns_nameval *dns_type_index(int);
+UDNS_API const struct dns_nameval *dns_rcode_index(int);
 UDNS_API int
 dns_findname(const struct dns_nameval *nv, const char *name);
 #define dns_findclassname(cls) dns_findname(dns_classtab, (cls))

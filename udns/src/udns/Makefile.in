@@ -1,5 +1,3 @@
-#! /usr/bin/make -rf
-# $Id: Makefile.in,v 1.11 2007/01/15 21:19:08 mjt Exp $
 # libudns Makefile
 #
 # Copyright (C) 2005  Michael Tokarev <mjt@corpit.ru>
@@ -32,17 +30,36 @@ DIST   = COPYING.LGPL udns.h udns.3 dnsget.1 rblcheck.1 $(SRCS) $(USRCS) \
 	 NEWS TODO NOTES Makefile.in configure configure.lib \
 	 inet_XtoX.c getopt.c
 
+CC=@CC@
+CPPFLAGS=@CPPFLAGS@
+CFLAGS=@CFLAGS@
+LDFLAGS=@LDFLAGS@
+AR=@AR@
+RANLIB=@RANLIB@
+LIBS=@LIBS@
+INSTALL=@INSTALL@
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+bindir=@bindir@
+sbindir=@sbindir@
+libdir=@libdir@
+includedir=${prefix}/include
+libexecdir=@libexecdir@
+datarootdir = @datarootdir@
+mandir=@mandir@
+mansubdir=@mansubdir@
+docdir=${prefix}/@docdir@
+sysconfdir=@sysconfdir@
+srcdir=@srcdir@
+top_srcdir=@top_srcdir@
+
+
 OBJS   = $(SRCS:.c=.o) $(GEN:.c=.o)
 LIB    = lib$(NAME).a
 LIBFL  = -L. -l$(NAME)
 
-SOVER  = 0
-SOBJS  = $(OBJS:.o=.lo)
-SOLIB  = lib$(NAME)_s.so
-SOLIBV = lib$(NAME).so.$(SOVER)
-SOLIBFL= -L. -l$(NAME)_s
-
-LIBS   = $(LIB) $(SOLIBV)
+LIBS   = $(LIB)
 
 UTILS   = $(USRCS:.c=)
 UOBJS   = $(USRCS:.c=.o)
@@ -50,13 +67,10 @@ SOUTILS = $(USRCS:.c=_s)
 
 NAMEPFX = $(NAME)-$(VERS)
 
-CC = @CC@
-CFLAGS = @CFLAGS@
-CDEFS = @CDEFS@
-PICFLAGS = -fPIC
+CDEFS = -DHAVE_UDNS_CONFIG_H
 AWK = awk
 
-all: static
+all: static libudns.o
 
 .SUFFIXES: .c .o .lo
 
@@ -64,20 +78,16 @@ static: $(LIB) $(UTILS)
 staticlib: $(LIB)
 $(LIB): $(OBJS)
 	-rm -f $@
-	$(AR) rv $@ $(OBJS)
+	@echo "- linking $@"
+	@$(AR) rv $@ $(OBJS)
+
+libudns.o:	$(OBJS)
+	@echo "- linking libudns.o"
+	@ld -r -o $@ $(OBJS)
+
 .c.o:
-	$(CC) $(CFLAGS) $(CDEFS) -c $<
-
-shared: $(SOLIBV) $(SOUTILS)
-sharedlib: $(SOLIBV)
-
-$(SOLIBV): $(SOBJS)
-	$(CC) -shared -Wl,--soname,$(SOLIBV) -o $@ $(SOBJS)
-$(SOLIB): $(SOLIBV)
-	rm -f $@
-	ln -s $(SOLIBV) $@
-.c.lo:
-	$(CC) $(CFLAGS) $(PICFLAGS) $(CDEFS) -o $@ -c $<
+	@echo "- compiling $<"
+	@$(CC) $(CPPFLAGS) $(CFLAGS) $(CDEFS) -c $<
 
 # udns_codes.c is generated from udns.h
 udns_codes.c: udns.h
@@ -111,32 +121,16 @@ udns.3.html: udns.3
 	groff -man -Thtml udns.3 > $@.tmp
 	mv $@.tmp $@
 
-dist: $(NAMEPFX).tar.gz
-$(NAMEPFX).tar.gz: $(DIST) $(DEB)
-	mkdir $(NAMEPFX) $(NAMEPFX)/debian
-	ln $(DIST) $(NAMEPFX)
-	ln $(DEB) $(NAMEPFX)/debian
-	tar cvfz $@ $(NAMEPFX)
-	rm -rf $(NAMEPFX)
-subdist:
-	cp -p $(DIST) $(TARGET)/
-
 clean:
 	rm -f $(OBJS)
 	rm -f $(SOBJS)
 	rm -f $(UOBJS)
 	rm -f build-stamp config.log
+
 distclean: clean
 	rm -f $(LIBS) $(SOLIB) udns.3.html
 	rm -f $(UTILS) $(SOUTILS)
-	rm -f config.status config.h Makefile
-
-
-Makefile: configure configure.lib Makefile.in
-	./configure
-	@echo
-	@echo Please rerun make >&2
-	@exit 1
+	rm -f config.status Makefile
 
 .PHONY: all static staticlib shared sharedlib dist clean distclean subdist \
   depend dep deps
@@ -167,10 +161,10 @@ depend dep deps: $(SRCS) $(USRC)
 udns_dn.o udns_dn.lo: udns_dn.c udns.h
 udns_dntosp.o udns_dntosp.lo: udns_dntosp.c udns.h
 udns_parse.o udns_parse.lo: udns_parse.c udns.h
-udns_resolver.o udns_resolver.lo: udns_resolver.c config.h udns.h
-udns_init.o udns_init.lo: udns_init.c config.h udns.h
+udns_resolver.o udns_resolver.lo: udns_resolver.c udns_config.h udns.h
+udns_init.o udns_init.lo: udns_init.c udns_config.h udns.h
 udns_misc.o udns_misc.lo: udns_misc.c udns.h
-udns_XtoX.o udns_XtoX.lo: udns_XtoX.c config.h udns.h inet_XtoX.c
+udns_XtoX.o udns_XtoX.lo: udns_XtoX.c udns_config.h udns.h inet_XtoX.c
 udns_rr_a.o udns_rr_a.lo: udns_rr_a.c udns.h
 udns_rr_ptr.o udns_rr_ptr.lo: udns_rr_ptr.c udns.h
 udns_rr_mx.o udns_rr_mx.lo: udns_rr_mx.c udns.h
@@ -179,7 +173,7 @@ udns_bl.o udns_bl.lo: udns_bl.c udns.h
 udns_rr_srv.o udns_rr_srv.lo: udns_rr_srv.c udns.h
 udns_rr_naptr.o udns_rr_naptr.lo: udns_rr_naptr.c udns.h
 udns_codes.o udns_codes.lo: udns_codes.c udns.h
-dnsget.o dnsget.lo: dnsget.c config.h udns.h getopt.c
+dnsget.o dnsget.lo: dnsget.c udns_config.h udns.h getopt.c
 rblcheck.o rblcheck.lo: rblcheck.c udns.h getopt.c
 ex-rdns.o ex-rdns.lo: ex-rdns.c udns.h
 dnsget: dnsget.o $(LIB)

@@ -23,8 +23,8 @@
 
  */
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
+#ifdef HAVE_UDNS_CONFIG_H
+# include "udns_config.h"
 #endif
 #include "udns.h"
 

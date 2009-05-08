@@ -1,0 +1,50 @@
+CC=@CC@
+CPPFLAGS=@CPPFLAGS@
+CFLAGS=@CFLAGS@
+PGCFLAGS=@PGCFLAGS@
+LDFLAGS=@LDFLAGS@
+AR=@AR@
+RANLIB=@RANLIB@
+LIBS=@LIBS@
+PGLIBS=@PGLIBS@
+INSTALL=@INSTALL@
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+bindir=@bindir@
+sbindir=@sbindir@
+libdir=@libdir@
+includedir=${prefix}/include
+libexecdir=@libexecdir@
+datarootdir = @datarootdir@
+mandir=@mandir@
+mansubdir=@mansubdir@
+docdir=${prefix}/@docdir@
+sysconfdir=@sysconfdir@
+srcdir=@srcdir@
+top_srcdir=@top_srcdir@
+XSLTPROC=@XSLTPROC@
+XMLLINT=@XMLLINT@
+MODULES_DIR=@MODULES_DIR@
+
+LUA=noit/timeval.lua \
+	noit/module/varnish.lua \
+	noit/module/smtp.lua
+
+all:
+
+install:
+	$(top_srcdir)/buildtools/mkinstalldirs $(DESTDIR)$(MODULES_DIR)/noit/module
+	for lua in $(LUA); do \
+		$(INSTALL) -m 0644 $$lua $(DESTDIR)$(MODULES_DIR)/$$lua ; \
+	done
+
+alldocs:	../modules/docs
+	for lua in $(LUA); do \
+		$(top_srcdir)/src/lua/src/lua extract_xml.lua $$lua tmp.xml ; \
+		test -f tmp.xml && \
+			$(XSLTPROC) ../modules/module.xsl tmp.xml | \
+			$(XMLLINT) --format - > \
+			$(top_srcdir)/docs/config/modules/`echo $$lua | sed -e 's/\.lua/.xml/; s/\//./g'` ; \
+		rm -f tmp.xml ; \
+	done

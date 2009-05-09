@@ -31,7 +31,7 @@ MODULES_DIR=@MODULES_DIR@
 WHOLE_ARCHIVE=@WHOLE_ARCHIVE@
 NOWHOLE_ARCHIVE=@NOWHOLE_ARCHIVE@
 
-SUBS=lua utils eventer udns modules noitedit man
+SUBS=lua utils eventer udns modules noitedit man stomp
 
 NOIT_OBJS=noitd.o noit_listener.o \
 	noit_console.o noit_console_state.o noit_console_telnet.o \
@@ -92,12 +92,17 @@ stratcond:	make-subdirs $(STRATCON_OBJS)
 		-Lutils -lnoit_utils \
 		-Ljlog -ljlog \
 		-Lnoitedit -lnoitedit \
+		-Lstomp -lstomp \
 		$(NOWHOLE_ARCHIVE) \
-		$(LIBS) $(PGLIBS)
+		$(LIBS) $(PGLIBS) @SERFLIBS@
 	@echo "- linking $@"
 
 stratcon_datastore.o:	stratcon_datastore.c
 	@$(CC) $(CPPFLAGS) $(PGCFLAGS) -c $<
+	@echo "- compiling $<"
+
+stratcon_iep.o:	stratcon_iep.c
+	@$(CC) $(CPPFLAGS) $(CFLAGS) @SERFCFLAGS@ -c $<
 	@echo "- compiling $<"
 
 .c.o:

@@ -182,11 +182,6 @@ struct iep_thread_driver *stratcon_iep_get_connection() {
   driver = pthread_getspecific(iep_connection);
   if(!driver) {
     driver = calloc(1, sizeof(*driver));
-#ifdef OPENWIRE
-    memset(&driver->connect_options, 0, sizeof(driver->connect_options));
-    strcpy(driver->connect_options.hostname, "127.0.0.1");
-    driver->connect_options.port = 61616;
-#endif
     pthread_setspecific(iep_connection, driver);
   }
 
@@ -195,14 +190,25 @@ struct iep_thread_driver *stratcon_iep_get_connection() {
   }
 
   if(!driver->connection) {
+    int port;
+    char hostname[128];
+    if(!noit_conf_get_int(NULL, "/stratcon/iep/port", &port))
+      port = 61613;
+    if(!noit_conf_get_stringbuf(NULL, "/stratcon/iep/hostname",
+                                hostname, sizeof(hostname)))
+      strlcpy(hostname, "127.0.0.1", sizeof(hostname));
 #ifdef OPENWIRE
+    memset(&driver->connect_options, 0, sizeof(driver->connect_options));
+    strlcpy(driver->connect_options.hostname, hostname,
+            sizeof(driver->connect_options.hostname));
+    driver->connect_options.port = port;
     if(amqcs_connect(&driver->connection, &driver->connect_options,
                      driver->pool) != APR_SUCCESS) {
       noitL(noit_error, "MQ connection failed\n");
       return NULL;
     }
 #else
-    if(stomp_connect(&driver->connection, "127.0.0.1", 61613,
+    if(stomp_connect(&driver->connection, hostname, port,
                      driver->pool)!= APR_SUCCESS) {
       noitL(noit_error, "MQ connection failed\n");
       return NULL;

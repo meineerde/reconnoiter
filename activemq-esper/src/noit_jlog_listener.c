@@ -243,7 +243,7 @@ socket_error:
 
     jcl->jlog = jlog_new(path);
     if(ac->cmd == NOIT_JLOG_DATA_TEMP_FEED)
-      if(jlog_ctx_add_subscriber(jcl->jlog, jcl->subscriber, JLOG_BEGIN) == -1)
+      if(jlog_ctx_add_subscriber(jcl->jlog, jcl->subscriber, JLOG_END) == -1)
         noitL(noit_error, "jlog reader[%s] error: %s\n", jcl->subscriber,
               jlog_ctx_err_string(jcl->jlog));
     if(jlog_ctx_open_reader(jcl->jlog, jcl->subscriber) == -1) {

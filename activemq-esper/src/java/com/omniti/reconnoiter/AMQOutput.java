@@ -36,9 +36,8 @@ public class AMQOutput implements UpdateListener {
         connection = connectionFactory.createConnection();
         connection.start();
         session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-        destination = session.createQueue("noit.alerts." + name);
+        destination = session.createTopic("noit.alerts." + name);
 
-        // Create a MessageProducer from the Session to the Topic or Queue
         producer = session.createProducer(destination);
         producer.setDeliveryMode(DeliveryMode.PERSISTENT);
       } catch(Exception e) {

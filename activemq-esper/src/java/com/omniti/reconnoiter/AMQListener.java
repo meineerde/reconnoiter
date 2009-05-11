@@ -64,8 +64,14 @@ public class AMQListener implements Runnable {
           try {
             String xml = textMessage.getText();
             StratconMessage m = StratconMessage.makeMessage(xml);
+            if(m == null) {
+              System.err.println("Can't grok:\n" + xml);
+            }
             if(m instanceof StratconQuery) {
               StratconQuery sq = (StratconQuery) m;
+
+              if(queries.containsKey(sq.getUUID())) throw (new Exception("Duplicate Query"));
+
               EPStatement statement = epService.getEPAdministrator().createEPL(sq.getExpression());
               AMQOutput o = new AMQOutput(epService, statement, sq.getName());
 
@@ -73,6 +79,7 @@ public class AMQListener implements Runnable {
               sq.setStatement(statement);
               sq.setListener(o);
               queries.put(sq.getUUID(), sq);
+              System.err.println("Creating Query: " + sq.getUUID());
             }
             else if(m instanceof StratconQueryStop) {
               StratconQuery sq = queries.get(((StratconQueryStop) m).getUUID());
@@ -85,7 +92,9 @@ public class AMQListener implements Runnable {
               System.err.println("Ingesting event");
               epService.getEPRuntime().sendEvent(((NoitEvent) m).getDocument());
             }
-          } catch(JMSException ie) { }
+          } catch(Exception ie) {
+            System.err.println(ie);
+          }
         }
       }
     }

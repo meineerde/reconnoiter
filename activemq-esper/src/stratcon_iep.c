@@ -42,6 +42,10 @@ struct iep_job_closure {
   apr_pool_t *pool;
 };
 
+static void
+stratcon_iep_datastore_onlooker(stratcon_datastore_op_t op,
+                                struct sockaddr *remote, void *operand);
+
 static int
 bust_to_parts(char *in, char **p, int len) {
   int cnt = 0;
@@ -110,14 +114,15 @@ stratcon_iep_doc_from_metric(char *data) {
 static xmlDocPtr
 stratcon_iep_doc_from_query(char *data) {
   xmlDocPtr doc;
-  char *parts[3];
-  if(bust_to_parts(data, parts, 3) != 3) return NULL;
-  /*  'Q' NAME QUERY  */
+  char *parts[4];
+  if(bust_to_parts(data, parts, 4) != 4) return NULL;
+  /*  'Q' ID NAME QUERY  */
 
   NEWDOC(doc, "StratconQuery",
          {
-           ADDCHILD("name", parts[1]);
-           ADDCHILD("expression", parts[2]);
+           ADDCHILD("id", parts[1]);
+           ADDCHILD("name", parts[2]);
+           ADDCHILD("expression", parts[3]);
          });
   return doc;
 }
@@ -159,6 +164,54 @@ stratcon_iep_age_from_line(char *data, struct timeval now) {
     return n - t;
   }
   return 0;
+}
+
+void stratcon_iep_submit_queries() {
+  int i, cnt = 0;
+  noit_conf_section_t *query_configs;
+  char path[256];
+
+  snprintf(path, sizeof(path), "/stratcon/iep/queries//query");
+  query_configs = noit_conf_get_sections(NULL, path, &cnt);
+  noitL(noit_debug, "Found %d %s stanzas\n", cnt, path);
+  for(i=0; i<cnt; i++) {
+    char id[UUID_STR_LEN];
+    char topic[256];
+    char *query;
+    char *line;
+    int line_len;
+
+    if(!noit_conf_get_stringbuf(query_configs[i],
+                                "self::node()/@id",
+                                id, sizeof(id))) {
+      noitL(noit_error, "No uuid specified in query\n");
+      continue;
+    }
+    if(!noit_conf_get_stringbuf(query_configs[i],
+                                "ancestor-or-self::node()/@topic",
+                                topic, sizeof(topic))) {
+      noitL(noit_error, "No topic specified in query\n");
+      continue;
+    }
+    if(!noit_conf_get_string(query_configs[i], "self::node()",
+                             &query)) {
+      noitL(noit_error, "No contents specified in query\n");
+      continue;
+    }
+    line_len = 4 /* 3 tabs + \0 */ +
+               1 /* 'Q' */ + 1 /* '\n' */ +
+               strlen(id) + strlen(topic) + strlen(query);
+    line = malloc(line_len);
+    snprintf(line, line_len, "Q\t%s\t%s\t%s\n", id, topic, query);
+    free(query);
+    query = line;
+    while(query[0] && query[1]) {
+      if(*query == '\n') *query = ' ';
+      query++;
+    }
+    stratcon_iep_datastore_onlooker(DS_OP_INSERT, NULL, line);
+    free(line);
+  }
 }
 
 static char *
@@ -219,6 +272,7 @@ struct iep_thread_driver *stratcon_iep_get_connection() {
       frame.command = "CONNECT";
       frame.headers = apr_hash_make(driver->pool);
 /*
+      We don't use login/pass
       apr_hash_set(frame.headers, "login", APR_HASH_KEY_STRING, "");
       apr_hash_set(frame.headers, "passcode", APR_HASH_KEY_STRING, "");
 */
@@ -240,8 +294,9 @@ struct iep_thread_driver *stratcon_iep_get_connection() {
         return NULL;
       }
       noitL(noit_error, "Response: %s, %s\n", frame->command, frame->body);
-     }     
+     }
 #endif
+     stratcon_iep_submit_queries();
   }
 
   return driver;
@@ -268,10 +323,9 @@ stratcon_iep_submitter(eventer_t e, int mask, void *closure,
   }
 
   if((age = stratcon_iep_age_from_line(job->line, *now)) > 60) {
-    noitL(noit_error, "Skipping old event %f second old.\n", age);
+    noitL(noit_debug, "Skipping old event %f second old.\n", age);
     return 0;
   }
-  noitL(noit_error, "Firing stratcon_iep_submitter on a event\n");
   job->doc = stratcon_iep_doc_from_line(job->line);
   if(job->doc) {
     job->doc_str = stratcon__xml_doc_to_str(job->doc);

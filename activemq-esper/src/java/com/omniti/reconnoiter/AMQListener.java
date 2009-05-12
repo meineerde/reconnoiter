@@ -89,7 +89,6 @@ public class AMQListener implements Runnable {
               }
             }
             else if(m instanceof NoitEvent) {
-              System.err.println("Ingesting event");
               epService.getEPRuntime().sendEvent(((NoitEvent) m).getDocument());
             }
           } catch(Exception ie) {

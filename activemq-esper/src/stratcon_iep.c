@@ -13,6 +13,9 @@
 #include "noit_conf.h"
 #include "noit_check.h"
 
+#include <unistd.h>
+#include <sys/fcntl.h>
+#include <assert.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <libxml/xmlsave.h>
@@ -45,6 +48,8 @@ struct iep_job_closure {
 static void
 stratcon_iep_datastore_onlooker(stratcon_datastore_op_t op,
                                 struct sockaddr *remote, void *operand);
+static void
+start_iep_daemon();
 
 static int
 bust_to_parts(char *in, char **p, int len) {
@@ -433,10 +438,147 @@ stratcon_jlog_streamer_iep_ctx_alloc(void) {
   return ctx;
 }
 
+struct iep_daemon_info {
+  pid_t child;
+  int stdin_pipe[2];
+  int stderr_pipe[2];
+  char *directory;
+  char *command;
+};
+
+static void
+iep_daemon_info_free(struct iep_daemon_info *info) {
+  if(!info) return;
+  if(info->directory) free(info->directory);
+  if(info->command) free(info->command);
+  if(info->stdin_pipe[0] >= 0) close(info->stdin_pipe[0]);
+  if(info->stdin_pipe[1] >= 0) close(info->stdin_pipe[1]);
+  if(info->stderr_pipe[0] >= 0) close(info->stderr_pipe[0]);
+  if(info->stderr_pipe[1] >= 0) close(info->stderr_pipe[1]);
+  free(info);
+}
+
+static int
+stratcon_iep_err_handler(eventer_t e, int mask, void *closure,
+                         struct timeval *now) {
+  int len, newmask;
+  char buff[4096];
+  struct iep_daemon_info *info = (struct iep_daemon_info *)closure;
+
+  if(mask & EVENTER_EXCEPTION) {
+    int rv;
+   read_error:
+    kill(SIGKILL, info->child);
+    if(waitpid(info->child, &rv, 0) != info->child) {
+      noitL(noit_error, "Failed to reap IEP daemon\n");
+      exit(-1);
+    }
+    noitL(noit_error, "IEP daemon is done, starting a new one\n");
+    start_iep_daemon();
+    eventer_remove_fd(e->fd);
+    e->opset->close(e->fd, &newmask, e);
+    return 0;
+  }
+  while(1) {
+    len = e->opset->read(e->fd, buff, sizeof(buff)-1, &newmask, e);
+    if(len == -1 && (errno == EAGAIN || errno == EINTR))
+      return newmask | EVENTER_EXCEPTION;
+    if(len <= 0) goto read_error;
+    assert(len < sizeof(buff));
+    buff[len] = '\0';
+    noitL(noit_error, "IEP: %s", buff);
+  }
+}
+
+static void
+start_iep_daemon() {
+  eventer_t newe;
+  struct iep_daemon_info *info;
+
+  info = calloc(1, sizeof(*info));
+  info->stdin_pipe[0] = info->stdin_pipe[1] = -1;
+  info->stderr_pipe[0] = info->stderr_pipe[1] = -1;
+
+  if(!noit_conf_get_string(NULL, "/stratcon/iep/start/@directory",
+                           &info->directory))
+    info->directory = strdup(".");
+  if(!noit_conf_get_string(NULL, "/stratcon/iep/start/@command",
+                           &info->command)) {
+    noitL(noit_error, "No IEP start command provided.  You're on your own.\n");
+    goto bail;
+  }
+  if(pipe(info->stdin_pipe) != 0 ||
+     pipe(info->stderr_pipe) != 0) {
+    noitL(noit_error, "pipe: %s\n", strerror(errno));
+    goto bail;
+  }
+  info->child = fork();
+  if(info->child == -1) {
+    noitL(noit_error, "fork: %s\n", strerror(errno));
+    goto bail;
+  }
+  if(info->child == 0) {
+    char *argv[2] = { "run-iep", NULL };
+    int stdout_fileno;
+
+    if(chdir(info->directory) != 0) {
+      noitL(noit_error, "Starting IEP daemon, chdir failed: %s\n",
+            strerror(errno));
+      exit(-1);
+    }
+
+    close(info->stdin_pipe[1]);
+    close(info->stderr_pipe[0]);
+    dup2(info->stdin_pipe[0], 0);
+    dup2(info->stderr_pipe[1], 2);
+    stdout_fileno = open("/dev/null", O_WRONLY);
+    dup2(stdout_fileno, 1);
+
+    exit(execv(info->command, argv));
+  }
+  /* in the parent */
+  socklen_t on = 1;
+
+  close(info->stdin_pipe[0]);
+  info->stdin_pipe[0] = -1;
+  close(info->stderr_pipe[1]);
+  info->stderr_pipe[1] = -1;
+  if(ioctl(info->stderr_pipe[0], FIONBIO, &on)) {
+    goto bail;
+  }
+
+  newe = eventer_alloc();
+  newe->fd = info->stderr_pipe[0];
+  newe->mask = EVENTER_READ | EVENTER_EXCEPTION;
+  newe->callback = stratcon_iep_err_handler;
+  newe->closure = info;
+  eventer_add(newe);
+  info = NULL;
+
+  return;
+
+ bail:
+  if(info) {
+    iep_daemon_info_free(info);
+  }
+  noitL(noit_error, "Failed to start IEP daemon\n");
+  exit(-1);
+  return;
+}
+
 void
 stratcon_iep_init() {
+  noit_boolean disabled = noit_false;
   apr_initialize();
   atexit(apr_terminate);   
+
+  if(noit_conf_get_boolean(NULL, "/stratcon/iep/@disabled", &disabled) &&
+     disabled == noit_true) {
+    noitL(noit_error, "IEP system is disabled!\n");
+    return;
+  }
+
+  start_iep_daemon();
 
   eventer_name_callback("stratcon_iep_submitter", stratcon_iep_submitter);
   pthread_key_create(&iep_connection, connection_destroy);

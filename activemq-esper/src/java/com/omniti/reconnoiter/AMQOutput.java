@@ -57,6 +57,6 @@ public class AMQOutput implements UpdateListener {
       }  catch(JMSException e) {
         System.err.println(e);
       }
-      System.out.println(output);
+      System.err.println(output);
     }
 }

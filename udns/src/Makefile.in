@@ -1,0 +1,109 @@
+CC=@CC@
+CPPFLAGS=@CPPFLAGS@
+CFLAGS=@CFLAGS@
+PGCFLAGS=@PGCFLAGS@
+LDFLAGS=@LDFLAGS@
+AR=@AR@
+RANLIB=@RANLIB@
+LIBS=@LIBS@
+PGLIBS=@PGLIBS@
+INSTALL=@INSTALL@
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+bindir=@bindir@
+sbindir=@sbindir@
+libdir=@libdir@
+includedir=${prefix}/include
+libexecdir=@libexecdir@
+datarootdir = @datarootdir@
+mandir=@mandir@
+mansubdir=@mansubdir@
+docdir=${prefix}/@docdir@
+sysconfdir=@sysconfdir@
+srcdir=@srcdir@
+top_srcdir=@top_srcdir@
+
+WHOLE_ARCHIVE=@WHOLE_ARCHIVE@
+NOWHOLE_ARCHIVE=@NOWHOLE_ARCHIVE@
+
+SUBS=lua utils eventer udns modules noitedit
+
+NOIT_OBJS=noitd.o noit_listener.o \
+	noit_console.o noit_console_state.o noit_console_telnet.o \
+	noit_check.o noit_check_log.o noit_check_tools.o \
+	noit_module.o noit_conf.o noit_conf_checks.o noit_tokenizer.o \
+	noit_jlog_listener.o noit_filters.o
+
+STRATCON_OBJS=stratcond.o noit_listener.o \
+	noit_console.o noit_console_state.o noit_console_telnet.o \
+	noit_conf.o noit_tokenizer.o \
+	stratcon_jlog_streamer.o stratcon_datastore.o
+
+all:	noitd stratcond
+
+make-subdirs:	serf/.libs/libserf-0.o jlog/libjlog.a
+	for dir in $(SUBS) ; do \
+		(cd $$dir && make) ; \
+	done
+
+jlog/libjlog.a:
+	(cd jlog && make libjlog.a)
+
+serf/.libs/libserf-0.a:
+	(cd serf && \
+		env \
+		CFLAGS="$(CFLAGS)" \
+		LDFLAGS="$(LDFLAGS)" \
+		python serfmake --with-apr=@APRPREFIX@)
+
+serf/.libs/libserf-0.o: serf/.libs/libserf-0.a
+	ld -r -o serf/.libs/libserf-0.o \
+		serf/.libs/context.o serf/buckets/.libs/*.o
+
+noitd:	make-subdirs $(NOIT_OBJS)
+	@$(CC) -o $@ $(NOIT_OBJS) \
+		udns/libudns.o \
+		$(LDFLAGS) \
+		$(WHOLE_ARCHIVE) \
+		-Leventer -leventer \
+		-Lutils -lnoit_utils \
+		-Ljlog -ljlog \
+		-Lnoitedit -lnoitedit \
+		$(NOWHOLE_ARCHIVE) \
+		$(LIBS)
+	@echo "- linking $@"
+
+stratcond:	make-subdirs $(STRATCON_OBJS)
+	@$(CC) -o $@ $(STRATCON_OBJS) \
+		udns/libudns.o \
+		$(LDFLAGS) \
+		$(WHOLE_ARCHIVE) \
+		-Leventer -leventer \
+		-Lutils -lnoit_utils \
+		-Ljlog -ljlog \
+		-Lnoitedit -lnoitedit \
+		$(NOWHOLE_ARCHIVE) \
+		$(LIBS) $(PGLIBS)
+	@echo "- linking $@"
+
+stratcon_datastore.o:	stratcon_datastore.c
+	@$(CC) $(CPPFLAGS) $(PGCFLAGS) -c $<
+	@echo "- compiling $<"
+
+.c.o:
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+	@echo "- compiling $<"
+
+noit_tokenizer.c:	noit_tokenizer.re
+	@re2c -o $@ noit_tokenizer.re
+	@echo "- re2c $<"
+
+clean-subdirs:
+	for dir in $(SUBS) ; do \
+		(cd $$dir && make clean) ; \
+	done
+
+clean:	clean-subdirs
+	rm -f *.o noitd
+

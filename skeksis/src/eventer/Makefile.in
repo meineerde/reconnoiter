@@ -1,0 +1,31 @@
+CC=@CC@
+CPPFLAGS=@CPPFLAGS@
+CFLAGS=@CFLAGS@
+LDFLAGS=@LDFLAGS@
+AR=@AR@
+RANLIB=@RANLIB@
+LIBS=@LIBS@
+INSTALL=@INSTALL@
+
+top_srcdir=@top_srcdir@
+
+OBJS=	eventer.o eventer_impl.o \
+	@EVENTER_OBJS@ \
+	eventer_POSIX_fd_opset.o \
+	eventer_SSL_fd_opset.o OETS_asn1_helper.o \
+	eventer_jobq.o
+
+all:	libeventer.a
+
+libeventer.a:	$(OBJS)
+	@rm -f $@
+	@$(AR) cq $@ $(OBJS)
+	@echo "- archiving $@"
+	@$(RANLIB) $@
+
+.c.o:
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+	@echo "- compiling $<"
+
+clean:
+	rm -f *.o libeventer.a

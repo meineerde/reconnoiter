@@ -1,0 +1,165 @@
+<stratcon>
+  <eventer/>
+
+  <logs>
+    <console_output>
+      <outlet name="stderr"/>
+      <log name="error"/>
+      <log name="debug"/>
+      <log name="error/iep"/>
+      <log name="error/eventer" disabled="true"/>
+      <log name="error/datastore" disabled="true"/>
+      <log name="debug/eventer" disabled="true"/>
+    </console_output>
+  </logs>
+
+  <noits>
+    <config>
+      <!--
+        If we have a connection failure, attempt to reconnect
+        immediately.  Upon failure wait 1000ms (1s) and
+        exponentially backoff up to 900000ms (900s or 15m)
+      -->
+      <reconnect_initial_interval>1000</reconnect_initial_interval>
+      <reconnect_maximum_interval>15000</reconnect_maximum_interval>
+    </config>
+    <sslconfig>
+      <key_file>%sysconfdir%/%PKIPREFIX%stratcon.key</key_file>
+      <certificate_file>%sysconfdir%/%PKIPREFIX%stratcon.crt</certificate_file>
+      <ca_chain>%sysconfdir%/%PKIPREFIX%ca.crt</ca_chain>
+    </sslconfig>
+    <noit address="127.0.0.1" port="43191" />
+  </noits>
+
+  <iep disabled="true"> <!-- false the default -->
+    <start directory="%iepdbdir%"
+           command="%iepbindir%/run-iep.sh" />
+    <queries>
+      <statement id="6cc613a4-7f9c-11de-973f-db7e8ccb2e5c" provides="CheckDetails-ddl">
+        <epl>create window CheckDetails.std:unique(uuid).win:keepall() as NoitCheck</epl>
+      </statement>
+      <statement id="76598f5e-7f9c-11de-9f5b-ebb4dcb2494e" provides="CheckDetails">
+        <requires>CheckDetails-ddl</requires>
+        <epl>insert into CheckDetails select * from NoitCheck</epl>
+      </statement>
+      <statement id="ba189f08-7f99-11de-9013-733772d37479" provides="UnavailableStream">
+        <requires>CheckDetails</requires>
+        <epl>insert into UnavailableStream
+             select p.* as delta, cds.target as target, cds.module as module,
+                    cds.name as name, p.s.uuid as uuid
+             from pattern [ every
+                            s=NoitStatus(availability='A') ->
+                            ( n0 = NoitStatus(uuid=s.uuid, availability='U')
+                              and not NoitStatus(uuid=s.uuid, availability='A'))
+                          ].std:lastevent() as p
+             inner join CheckDetails as cds on cds.uuid = p.s.uuid
+        </epl>
+      </statement>
+      <query id="ce6bf8d2-3dd7-11de-a45c-a7df160cba9e" topic="status">
+        <epl>select * from NoitStatus</epl>
+      </query>
+    </queries>
+  </iep>
+
+  <database>
+    <journal>
+      <path>/var/log/stratcon.persist</path>
+    </journal>
+    <dbconfig>
+      <host>localhost</host>
+      <dbname>reconnoiter</dbname>
+      <user>stratcon</user>
+      <password>unguessable</password>
+    </dbconfig>
+    <statements>
+      <!-- These are optional and used for stuff like setting search paths -->
+      <!--
+      <metanodepostconnect><![CDATA[
+        SELECT do_some_magic();
+      ]]></metanodepostconnect>
+      <storagepostconnect><![CDATA[
+        SELECT do_some_magic($1,$2);
+      ]]></storagepostconnect>
+      -->
+      <allchecks><![CDATA[
+        SELECT remote_address, id, target, module, name
+          FROM noit.get_checks()
+      ]]></allchecks>
+      <findcheck><![CDATA[
+        SELECT remote_address, id, target, module, name
+          FROM noit.get_check($1,$2)
+      ]]></findcheck>
+      <allstoragenodes><![CDATA[
+        SELECT storage_node_id, fqdn, dsn
+          FROM stratcon.storage_node
+      ]]></allstoragenodes>
+      <findstoragenode><![CDATA[
+        SELECT fqdn, dsn
+          FROM stratcon.storage_node
+         WHERE storage_node_id = $1
+      ]]></findstoragenode>
+      <mapallchecks><![CDATA[
+        SELECT id, sid, storage_node_id, fqdn, dsn
+          FROM stratcon.map_uuid_to_sid LEFT JOIN stratcon.storage_node USING (storage_node_id)
+      ]]></mapallchecks>
+      <mapchecktostoragenode><![CDATA[
+        SELECT o_storage_node_id as storage_node_id, o_sid as sid,
+               o_fqdn as fqdn, o_dsn as dsn
+          FROM stratcon.map_uuid_to_sid($1,$2)
+      ]]></mapchecktostoragenode>
+      <check><![CDATA[
+        INSERT INTO check_archive
+                    (remote_address, whence, sid, id, target, module, name)
+             VALUES ($1, 'epoch'::timestamptz + ($2 || ' seconds')::interval,
+                     $3, $4, $5, $6, $7)
+      ]]></check>
+      <status><![CDATA[
+        INSERT INTO check_status_archive
+                    (whence, sid, state, availability, duration, status)
+             VALUES ('epoch'::timestamptz + ($1 || ' seconds')::interval,
+                     $2, $3, $4, $5, $6)
+      ]]></status>
+      <metric_numeric><![CDATA[
+        INSERT INTO metric_numeric_archive
+                    (whence, sid, name, value)
+             VALUES ('epoch'::timestamptz + ($1 || ' seconds')::interval,
+                     $2, $3, $4)
+      ]]></metric_numeric>
+      <metric_text><![CDATA[
+        INSERT INTO metric_text_archive
+                    ( whence, sid, name,value)
+             VALUES ('epoch'::timestamptz + ($1 || ' seconds')::interval,
+                     $2, $3, $4)
+      ]]></metric_text>
+      <config><![CDATA[
+        SELECT stratcon.update_config
+               ($1, $2, 
+                'epoch'::timestamptz + ($3 || ' seconds')::interval,
+                $4 )
+      ]]></config>
+    </statements>
+  </database>
+
+  <listeners>
+    <sslconfig>
+      <key_file>%sysconfdir%/%PKIPREFIX%stratcon.key</key_file>
+      <certificate_file>%sysconfdir%/%PKIPREFIX%stratcon.crt</certificate_file>
+      <ca_chain>%sysconfdir%/%PKIPREFIX%ca.crt</ca_chain>
+    </sslconfig>
+    <consoles type="noit_console">
+      <listener address="/tmp/stratcon">
+        <config><line_protocol>telnet</line_protocol></config>
+      </listener>
+    </consoles>
+    <realtime type="http_rest_api">
+      <listener address="*" port="80">
+        <config>
+          <hostname>stratcon.noit.example.com</hostname>
+          <document_domain>noit.example.com</document_domain>
+        </config>
+      </listener>
+    </realtime>
+    <listener type="control_dispatch" address="*" port="43191" ssl="on" />
+  </listeners>
+
+</stratcon>
